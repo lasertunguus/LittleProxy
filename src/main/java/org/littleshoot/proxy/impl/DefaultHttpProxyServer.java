@@ -1,5 +1,38 @@
 package org.littleshoot.proxy.impl;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.InetSocketAddress;
+import java.util.Collection;
+import java.util.Properties;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.net.ssl.SSLEngine;
+
+import org.apache.commons.io.IOUtils;
+import org.littleshoot.proxy.ActivityTracker;
+import org.littleshoot.proxy.ChainedProxyManager;
+import org.littleshoot.proxy.DefaultHostResolver;
+import org.littleshoot.proxy.DnsSecServerResolver;
+import org.littleshoot.proxy.HostResolver;
+import org.littleshoot.proxy.HttpFilters;
+import org.littleshoot.proxy.HttpFiltersSource;
+import org.littleshoot.proxy.HttpFiltersSourceAdapter;
+import org.littleshoot.proxy.HttpProxyServer;
+import org.littleshoot.proxy.HttpProxyServerBootstrap;
+import org.littleshoot.proxy.MitmManager;
+import org.littleshoot.proxy.NetworkInterfaceProvider;
+import org.littleshoot.proxy.ProxyAuthenticator;
+import org.littleshoot.proxy.SslEngineSource;
+import org.littleshoot.proxy.TransportProtocol;
+import org.littleshoot.proxy.UnknownTransportProtocolException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.netty.bootstrap.ChannelFactory;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -16,36 +49,6 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.udt.nio.NioUdtProvider;
 import io.netty.handler.traffic.GlobalTrafficShapingHandler;
 import io.netty.util.concurrent.GlobalEventExecutor;
-import org.apache.commons.io.IOUtils;
-import org.littleshoot.proxy.ActivityTracker;
-import org.littleshoot.proxy.ChainedProxyManager;
-import org.littleshoot.proxy.DefaultHostResolver;
-import org.littleshoot.proxy.DnsSecServerResolver;
-import org.littleshoot.proxy.HostResolver;
-import org.littleshoot.proxy.HttpFilters;
-import org.littleshoot.proxy.HttpFiltersSource;
-import org.littleshoot.proxy.HttpFiltersSourceAdapter;
-import org.littleshoot.proxy.HttpProxyServer;
-import org.littleshoot.proxy.HttpProxyServerBootstrap;
-import org.littleshoot.proxy.MitmManager;
-import org.littleshoot.proxy.ProxyAuthenticator;
-import org.littleshoot.proxy.SslEngineSource;
-import org.littleshoot.proxy.TransportProtocol;
-import org.littleshoot.proxy.UnknownTransportProtocolException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.net.ssl.SSLEngine;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.InetSocketAddress;
-import java.util.Collection;
-import java.util.Properties;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * <p>
@@ -101,6 +104,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
     private volatile InetSocketAddress boundAddress;
     private final SslEngineSource sslEngineSource;
     private final boolean authenticateSslClients;
+    private final NetworkInterfaceProvider interfaceProvider;
     private final ProxyAuthenticator proxyAuthenticator;
     private final ChainedProxyManager chainProxyManager;
     private final MitmManager mitmManager;
@@ -228,6 +232,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
             InetSocketAddress requestedAddress,
             SslEngineSource sslEngineSource,
             boolean authenticateSslClients,
+            NetworkInterfaceProvider interfaceProvider,
             ProxyAuthenticator proxyAuthenticator,
             ChainedProxyManager chainProxyManager,
             MitmManager mitmManager,
@@ -246,6 +251,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
         this.requestedAddress = requestedAddress;
         this.sslEngineSource = sslEngineSource;
         this.authenticateSslClients = authenticateSslClients;
+        this.interfaceProvider = interfaceProvider;
         this.proxyAuthenticator = proxyAuthenticator;
         this.chainProxyManager = chainProxyManager;
         this.mitmManager = mitmManager;
@@ -360,6 +366,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
                         requestedAddress.getPort() == 0 ? 0 : requestedAddress.getPort() + 1),
                     sslEngineSource,
                     authenticateSslClients,
+                interfaceProvider,
                     proxyAuthenticator,
                     chainProxyManager,
                     mitmManager,
@@ -537,6 +544,10 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
         return sslEngineSource;
     }
 
+    protected NetworkInterfaceProvider getInterfaceProvider() {
+        return interfaceProvider;
+    }
+
     protected ProxyAuthenticator getProxyAuthenticator() {
         return proxyAuthenticator;
     }
@@ -569,6 +580,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
         private SslEngineSource sslEngineSource = null;
         private boolean authenticateSslClients = true;
         private ProxyAuthenticator proxyAuthenticator = null;
+        private NetworkInterfaceProvider interfaceProvider = null;
         private ChainedProxyManager chainProxyManager = null;
         private MitmManager mitmManager = null;
         private HttpFiltersSource filtersSource = new HttpFiltersSourceAdapter();
@@ -594,6 +606,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
                 InetSocketAddress requestedAddress,
                 SslEngineSource sslEngineSource,
                 boolean authenticateSslClients,
+                NetworkInterfaceProvider interfaceProvider,
                 ProxyAuthenticator proxyAuthenticator,
                 ChainedProxyManager chainProxyManager,
                 MitmManager mitmManager,
@@ -611,6 +624,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
             this.port = requestedAddress.getPort();
             this.sslEngineSource = sslEngineSource;
             this.authenticateSslClients = authenticateSslClients;
+            this.interfaceProvider = interfaceProvider;
             this.proxyAuthenticator = proxyAuthenticator;
             this.chainProxyManager = chainProxyManager;
             this.mitmManager = mitmManager;
@@ -820,7 +834,7 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
 
             return new DefaultHttpProxyServer(serverGroup,
                     transportProtocol, determineListenAddress(),
-                    sslEngineSource, authenticateSslClients,
+                    sslEngineSource, authenticateSslClients, interfaceProvider,
                     proxyAuthenticator, chainProxyManager, mitmManager,
                     filtersSource, transparent,
                     idleConnectionTimeout, activityTrackers, connectTimeout,
@@ -841,5 +855,12 @@ public class DefaultHttpProxyServer implements HttpProxyServer {
                 }
             }
         }
+
+        @Override
+        public HttpProxyServerBootstrap withNetworkInterfaceProvider(NetworkInterfaceProvider interfaceProvider) {
+            this.interfaceProvider = interfaceProvider;
+            return this;
+        }
     }
+
 }
