@@ -8,6 +8,7 @@ import static org.littleshoot.proxy.impl.ConnectionState.DISCONNECTED;
 import static org.littleshoot.proxy.impl.ConnectionState.HANDSHAKING;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.LinkedList;
@@ -25,6 +26,7 @@ import org.littleshoot.proxy.ChainedProxyManager;
 import org.littleshoot.proxy.FullFlowContext;
 import org.littleshoot.proxy.HttpFilters;
 import org.littleshoot.proxy.MitmManager;
+import org.littleshoot.proxy.NetworkInterfaceProvider;
 import org.littleshoot.proxy.TransportProtocol;
 import org.littleshoot.proxy.UnknownTransportProtocolException;
 
@@ -864,9 +866,10 @@ public class ProxyToServerConnection extends ProxyConnection<HttpResponse> {
 
             this.currentFilters.proxyToServerResolutionSucceeded(serverHostAndPort, this.remoteAddress);
 
-            if (proxyServer.getInterfaceProvider() != null
-                    && proxyServer.getInterfaceProvider().getInterface() != null) {
-                this.localAddress = new InetSocketAddress(proxyServer.getInterfaceProvider().getInterface(), 0);
+            NetworkInterfaceProvider interfaceProvider = proxyServer.getInterfaceProvider();
+            InetAddress netint;
+            if (interfaceProvider != null && (netint = interfaceProvider.getInterface()) != null) {
+                this.localAddress = new InetSocketAddress(netint, 0);
             } else {
                 this.localAddress = proxyServer.getLocalAddress();
             }
